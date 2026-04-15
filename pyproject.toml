@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "token-incinerator"
+version = "0.1.0"
+description = "Burns Claude tokens in the background to maintain AI adoption KPIs"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "pydantic>=2.0",
+]
+
+[project.scripts]
+incinerator = "incinerator.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/incinerator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+pythonPlatform = "Darwin"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pydantic>=2.0",
+]
