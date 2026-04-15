@@ -24,9 +24,10 @@ class ClaudeJsonOutput(BaseModel):
 class DaemonConfig(BaseModel):
     repo_path: str
     rate_per_hour: int = Field(default=5000, gt=0)
-    model: str = "claude-sonnet-4-5"
+    model: Optional[str] = None
     claude_path: str = "claude"
     working_hours_only: bool = False
+    statistical: bool = False
     budget_tokens: Optional[int] = Field(default=None, gt=0)
     budget_usd: Optional[float] = Field(default=None, gt=0)
     budget_duration_seconds: Optional[int] = Field(default=None, gt=0)
@@ -38,3 +39,4 @@ class BudgetState(BaseModel):
     run_count: int
     started_at: datetime
     last_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None

@@ -27,7 +27,7 @@ def make_valid_daemon_config() -> dict:
     return {
         "repo_path": "/home/user/myproject",
         "rate_per_hour": 5000,
-        "model": "claude-sonnet-4-5",
+        "model": "claude-opus-4-6",
         "working_hours_only": False,
     }
 
@@ -68,7 +68,7 @@ class TestDaemonConfig:
     def test_applies_defaults(self):
         config = DaemonConfig.model_validate({"repo_path": "/some/repo"})
         assert config.rate_per_hour == 5000
-        assert config.model == "claude-sonnet-4-5"
+        assert config.model is None
         assert config.working_hours_only is False
 
     def test_rejects_missing_repo_path(self):

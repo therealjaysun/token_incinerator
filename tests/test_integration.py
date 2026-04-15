@@ -243,6 +243,16 @@ class TestStatePersistence:
 # ---------------------------------------------------------------------------
 
 class TestCliCommands:
+    def test_root_help_includes_subcommand_options(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        out = result.output
+        assert "Commands (full)" in out
+        assert "--repo" in out
+        assert "--statistical" in out
+        assert "Usage:" in out and "start [OPTIONS]" in out
+
     def test_status_shows_stopped_when_no_daemon(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr("incinerator.cli._STATE_DIR", str(tmp_path))
         runner = CliRunner()
@@ -328,6 +338,35 @@ class TestCliCommands:
         result = runner.invoke(cli, ["start", "--repo", str(repo), "--usd", "1.0"])
         assert result.exit_code != 0
         assert "not found" in result.output.lower() or "not found" in (result.output + (result.exception or "")).lower()
+
+    def test_start_command_forks_daemon_and_writes_pid_file(self, tmp_path: Path, monkeypatch):
+        """
+        Full end-to-end path: CLI start → check_claude_auth → fork_daemon → daemon writes PID.
+        This is the test that would have caught the `detach=False` bug in fork_daemon.
+        """
+        monkeypatch.setattr("incinerator.cli._STATE_DIR", str(tmp_path))
+
+        # Put fake claude on PATH so both check_claude_auth and the daemon subprocess find it
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        fake_claude = make_fake_claude(bin_dir)
+        monkeypatch.setenv("PATH", str(bin_dir) + ":" + os.environ.get("PATH", ""))
+
+        repo = make_repo(tmp_path)
+        cli_runner = CliRunner()
+        result = cli_runner.invoke(cli, ["start", "--repo", str(repo), "--usd", "1.0"])
+
+        assert result.exit_code == 0, f"start failed: {result.output}"
+        assert "started" in result.output.lower()
+
+        pid_file = tmp_path / "incinerator.pid"
+        assert wait_for_file(pid_file, timeout=8), "PID file not created — fork_daemon likely failed"
+
+        # Clean up background daemon
+        from incinerator.daemon import PidFileManager as _Mgr
+        info = _Mgr(state_dir=str(tmp_path)).read()
+        if info and _Mgr(state_dir=str(tmp_path)).is_process_alive(info["pid"]):
+            os.kill(info["pid"], signal.SIGTERM)
 
 
 # ---------------------------------------------------------------------------

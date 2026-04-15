@@ -29,6 +29,21 @@ pip install -e .
 
 ## Usage
 
+### CLI Help
+
+```bash
+incinerator --help
+```
+
+**Commands:**
+
+| Command | Purpose | Help |
+|---|---|---|
+| `start` | Start daemon and attach live watch | `incinerator start --help` |
+| `status` | Show daemon/process and spend summary | `incinerator status --help` |
+| `stop` | Stop the background daemon | `incinerator stop --help` |
+| `watch` | Reconnect to live display | `incinerator watch --help` |
+
 ### Start
 
 ```bash
@@ -44,8 +59,10 @@ incinerator start --repo /path/to/your/repo [options]
 | `--usd N` | Stop after spending $N | — |
 | `--duration 2h` | Stop after a time duration (`2h`, `30m`, `3600s`) | — |
 | `--rate N` | Target tokens/hour, controls inter-request pacing | `5000` |
-| `--model MODEL` | Claude model to use | `claude-sonnet-4-5` |
+| `--model MODEL` | Claude model to use | Claude's own default |
 | `--working-hours-only` | Only burn during 9am–5pm local time | off |
+| `--statistical` | Use Poisson-distributed timing (default mode is continuous/no delay) | off |
+| `--help` | Show command help and exit | — |
 
 Any combination of `--tokens`, `--usd`, and `--duration` can be set — the incinerator stops when the **first** limit is reached. With no budget flags it runs indefinitely until stopped manually.
 
@@ -71,10 +88,14 @@ incinerator start --repo ~/my-project --usd 20.00 --working-hours-only
 incinerator status
 ```
 
+```bash
+incinerator status --help
+```
+
 ```
 Status: RUNNING (PID 48291)
 Repo:   /Users/you/my-project
-Model:  claude-sonnet-4-5
+Model:  (claude default)
 Rate:   5,000 tokens/hr
 
 Spend so far:
@@ -90,7 +111,21 @@ Spend so far:
 incinerator stop
 ```
 
+```bash
+incinerator stop --help
+```
+
 Sends SIGTERM to the background process. State is saved before exit.
+
+### Watch
+
+```bash
+incinerator watch
+```
+
+```bash
+incinerator watch --help
+```
 
 ### Logs
 

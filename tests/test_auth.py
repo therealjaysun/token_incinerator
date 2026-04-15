@@ -97,6 +97,17 @@ exit 2
         ok, msg = check_claude_auth(claude_path=str(script))
         assert ok is False
 
+    def test_returns_false_for_usage_limit_error(self, tmp_path: Path):
+        script = tmp_path / "claude"
+        script.write_text("""#!/bin/bash
+echo "Error: usage limit reached for your account" >&2
+exit 1
+""")
+        script.chmod(0o755)
+        ok, msg = check_claude_auth(claude_path=str(script))
+        assert ok is False
+        assert "usage limit" in msg.lower()
+
 
 class TestLoopAbortOnAuthFailure:
     def make_auth_fail_result(self) -> RunResult:
@@ -210,3 +221,40 @@ class TestLoopAbortOnAuthFailure:
         event_names = [e.get("event") for e in logger.events]
         assert "fatal_error" not in event_names
         assert "budget_exhausted" in event_names
+
+
+class TestLoopAbortOnUsageLimit:
+    def test_loop_aborts_immediately_on_usage_limit(self):
+        call_count = 0
+        usage_limited = RunResult(
+            prompt_category="review",
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cost_usd=0.0,
+            duration_ms=0,
+            success=False,
+            error_message="claude exited 1: usage limit reached",
+        )
+
+        class UsageLimitRunner:
+            def run(self, prompt: BurnPrompt) -> RunResult:
+                nonlocal call_count
+                call_count += 1
+                return usage_limited
+
+        logger = FakeLogger()
+        run_burn_loop(
+            config=make_config(),
+            repo_files=[make_file()],
+            initial_state=make_initial_state(),
+            runner=UsageLimitRunner(),
+            logger=logger,
+            delay_fn=lambda ms, s: None,
+            random_fn=random.Random(42).random,
+        )
+
+        assert call_count == 1
+        fatal = next(e for e in logger.events if e.get("event") == "fatal_error")
+        assert fatal.get("reason") == "usage_limit"
+        assert "usage limit" in (fatal.get("message") or "").lower()

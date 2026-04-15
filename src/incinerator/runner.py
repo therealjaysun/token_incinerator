@@ -21,10 +21,23 @@ _AUTH_ERROR_SIGNALS = (
     "login",
 )
 
+_USAGE_LIMIT_ERROR_SIGNALS = (
+    "usage limit",
+    "quota exceeded",
+    "monthly limit",
+    "daily limit",
+    "credit balance is too low",
+)
+
 
 def is_auth_error(message: str) -> bool:
     lower = message.lower()
     return any(signal in lower for signal in _AUTH_ERROR_SIGNALS)
+
+
+def is_usage_limit_error(message: str) -> bool:
+    lower = message.lower()
+    return any(signal in lower for signal in _USAGE_LIMIT_ERROR_SIGNALS)
 
 
 def check_claude_auth(claude_path: str = "claude") -> tuple[bool, str]:
@@ -56,6 +69,12 @@ def check_claude_auth(claude_path: str = "claude") -> tuple[bool, str]:
                 f"Run 'claude login' to authenticate, then retry.\n"
                 f"Details: {stderr}"
             )
+        if is_usage_limit_error(stderr):
+            return False, (
+                "Claude appears to be at a usage limit.\n"
+                "Wait for your limit window to reset (or upgrade account limits), then retry.\n"
+                f"Details: {stderr}"
+            )
         return False, f"claude exited {proc.returncode}: {stderr}"
 
     return True, ""
@@ -64,7 +83,7 @@ def check_claude_auth(claude_path: str = "claude") -> tuple[bool, str]:
 class ClaudeRunner:
     def __init__(
         self,
-        model: str,
+        model: Optional[str] = None,
         claude_path: str = "claude",
         max_budget_usd_per_run: Optional[float] = None,
     ) -> None:
@@ -79,9 +98,9 @@ class ClaudeRunner:
             "--allowedTools", "Read,Grep,Glob",
             "--output-format", "json",
             "--no-session-persistence",
-            "--model", self._model,
-            "--permission-mode", "dontAsk",
         ]
+        if self._model is not None:
+            cmd += ["--model", self._model]
         if self._max_budget_usd_per_run is not None:
             cmd += ["--max-budget-usd", str(self._max_budget_usd_per_run)]
 
@@ -151,5 +170,5 @@ class ClaudeRunner:
             cost_usd=output.total_cost_usd,
             duration_ms=output.duration_ms,
             success=not output.is_error,
-            error_message=None,
+            error_message=output.result if output.is_error else None,
         )

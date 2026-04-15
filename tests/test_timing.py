@@ -4,8 +4,10 @@ import random
 import pytest
 
 from incinerator.timing import (
+    is_within_work_window,
     sample_exponential_ms,
     sample_session_duration_ms,
+    seconds_until_work_window,
     workday_weight,
 )
 
@@ -97,3 +99,38 @@ class TestWorkdayWeight:
     def test_night_hours_have_low_weight(self):
         for hour in [0, 1, 2, 3, 4, 5]:
             assert workday_weight(hour) < 0.3, f"hour {hour} should be low activity"
+
+
+class TestIsWithinWorkWindow:
+    def test_midday_is_within_window(self):
+        assert is_within_work_window(10) is True
+        assert is_within_work_window(14) is True
+
+    def test_middle_of_night_is_outside_window(self):
+        assert is_within_work_window(3) is False
+        assert is_within_work_window(0) is False
+
+    def test_consistent_with_workday_weight(self):
+        for hour in range(24):
+            assert is_within_work_window(hour) == (workday_weight(hour) >= 0.05)
+
+
+class TestSecondsUntilWorkWindow:
+    def test_returns_positive_value_for_night_hours(self):
+        for hour in [0, 1, 2, 3, 4, 5]:
+            assert seconds_until_work_window(hour) > 0
+
+    def test_night_hour_waits_until_morning(self):
+        # Hour 3am: next work window starts at ~6am → ~3 hours wait
+        wait = seconds_until_work_window(3)
+        assert 2 * 3600 <= wait <= 6 * 3600
+
+    def test_midnight_waits_several_hours(self):
+        # Hour 0: next work starts at ~6am → ~6 hours
+        wait = seconds_until_work_window(0)
+        assert wait >= 5 * 3600
+
+    def test_late_night_wraps_to_next_day(self):
+        # Hour 22 (10pm): next work starts ~6am next day → ~8 hours
+        wait = seconds_until_work_window(22)
+        assert wait >= 6 * 3600

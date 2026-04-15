@@ -6,6 +6,7 @@ import random
 import signal
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -18,13 +19,30 @@ from incinerator.loop import run_burn_loop
 from incinerator.repo import walk_repo
 from incinerator.runner import ClaudeRunner, check_claude_auth
 from incinerator.schemas import DaemonConfig
+from incinerator.watch import watch_loop
 
 _STATE_DIR = str(Path.home() / ".incinerator")
 
 
-@click.group()
+class _RootHelpGroup(click.Group):
+    """Include each subcommand's options in `incinerator --help` (not just command names)."""
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        super().format_help(ctx, formatter)
+        formatter.write_paragraph()
+        formatter.write_heading("Commands (full)")
+        for name in sorted(self.list_commands(ctx)):
+            cmd = self.get_command(ctx, name)
+            if cmd is None or getattr(cmd, "hidden", False):
+                continue
+            sub_ctx = click.Context(cmd, parent=ctx, info_name=name)
+            formatter.write_paragraph()
+            cmd.format_help(sub_ctx, formatter)
+
+
+@click.group(cls=_RootHelpGroup)
 def cli() -> None:
-    """Token Incinerator — burn Claude tokens in the background."""
+    """Token Incinerator — burn Claude tokens in the background because you're a modern day luddite"""
 
 
 @cli.command()
@@ -32,19 +50,21 @@ def cli() -> None:
 @click.option("--tokens", default=None, type=int, help="Token budget (stop after N tokens)")
 @click.option("--usd", default=None, type=float, help="USD budget (stop after $N)")
 @click.option("--duration", default=None, type=str, help="Duration budget e.g. 2h, 30m, 3600s")
-@click.option("--rate", default=5000, type=int, help="Target tokens/hour (controls pacing)")
-@click.option("--model", default="claude-sonnet-4-5", help="Claude model to use")
+@click.option("--rate", default=5000, type=int, help="Target tokens/hour (controls pacing, only used with --statistical)")
+@click.option("--model", default=None, help="Claude model to use (default: Claude's own default)")
 @click.option("--working-hours-only", is_flag=True, default=False, help="Only burn during 9am-5pm")
+@click.option("--statistical", is_flag=True, default=False, help="Use Poisson-distributed request timing to mimic natural pacing (default: fire continuously)")
 def start(
     repo: str,
     tokens: Optional[int],
     usd: Optional[float],
     duration: Optional[str],
     rate: int,
-    model: str,
+    model: Optional[str],
     working_hours_only: bool,
+    statistical: bool,
 ) -> None:
-    """Start the incinerator in the background."""
+    """Start the incinerator. Opens the live watch display automatically."""
     ok, auth_error = check_claude_auth()
     if not ok:
         click.echo(f"Error: {auth_error}", err=True)
@@ -63,6 +83,7 @@ def start(
         rate_per_hour=rate,
         model=model,
         working_hours_only=working_hours_only,
+        statistical=statistical,
         budget_tokens=tokens,
         budget_usd=usd,
         budget_duration_seconds=duration_seconds,
@@ -70,14 +91,24 @@ def start(
 
     pid = fork_daemon(config, state_dir=_STATE_DIR)
     click.echo(f"Incinerator started (PID {pid})")
-    click.echo(f"Logs: ~/.incinerator/incinerator.log")
-    click.echo(f"Repo: {config.repo_path}")
     if tokens:
         click.echo(f"Budget: {tokens:,} tokens")
     if usd:
         click.echo(f"Budget: ${usd:.2f}")
     if duration:
         click.echo(f"Duration: {duration}")
+    if statistical:
+        click.echo(f"Mode: statistical ({rate:,} tokens/hr target)")
+    else:
+        click.echo("Mode: continuous (no delay between requests)")
+    click.echo("")
+
+    try:
+        watch_loop(state_dir=_STATE_DIR)
+    except KeyboardInterrupt:
+        click.echo("\nDetached from watch. Daemon continues running in the background.")
+        click.echo("  incinerator watch    — reconnect to live display")
+        click.echo("  incinerator stop     — stop the daemon")
 
 
 @cli.command()
@@ -110,7 +141,7 @@ def status() -> None:
     click.echo(f"Status: RUNNING (PID {result['pid']})")
     config: DaemonConfig = result["config"]
     click.echo(f"Repo:   {config.repo_path}")
-    click.echo(f"Model:  {config.model}")
+    click.echo(f"Model:  {config.model or '(claude default)'}")
     click.echo(f"Rate:   {config.rate_per_hour:,} tokens/hr")
 
     state_file = Path(_STATE_DIR) / "state.json"
@@ -126,6 +157,12 @@ def status() -> None:
                 click.echo(f"  Last:    {state.last_run_at.strftime('%H:%M:%S')}")
         except Exception:
             pass
+
+
+@cli.command()
+def watch() -> None:
+    """Live token counter and progress display. Updates every second."""
+    watch_loop(state_dir=_STATE_DIR)
 
 
 @cli.command(name="__daemon__", hidden=True)
@@ -153,11 +190,25 @@ def daemon_entry(config_json: str) -> None:
     state_file = Path(state_dir) / "state.json"
     current_state = [initial_state]  # mutable cell so SIGTERM handler always has latest
 
+    # Deterministic seed derived from session start time — same session = same delay sequence
+    rng = random.Random(int(initial_state.started_at.timestamp()))
+
     def save_state(s: "BudgetState") -> None:
         current_state[0] = s
         state_file.write_text(s.model_dump_json())
 
     def delay_fn(ms: float, s: "BudgetState") -> None:
+        from incinerator.schemas import BudgetState as _BS
+        if ms > 0:
+            next_run = datetime.now(tz=timezone.utc) + timedelta(milliseconds=ms)
+            s = _BS(
+                total_tokens_used=s.total_tokens_used,
+                total_cost_usd=s.total_cost_usd,
+                run_count=s.run_count,
+                started_at=s.started_at,
+                last_run_at=s.last_run_at,
+                next_run_at=next_run,
+            )
         save_state(s)
         time.sleep(ms / 1000)
 
@@ -176,10 +227,12 @@ def daemon_entry(config_json: str) -> None:
         runner=runner,
         logger=logger,
         delay_fn=delay_fn,
-        random_fn=random.random,
+        random_fn=rng.random,
     )
 
-    logger.log({"event": "daemon_stopped", "reason": "budget_exhausted"})
+    from incinerator.budget import is_exhausted as _is_exhausted
+    stop_reason = "budget_exhausted" if _is_exhausted(final_state, config) else "fatal_error"
+    logger.log({"event": "daemon_stopped", "reason": stop_reason})
     save_state(final_state)
     mgr.remove()
 

@@ -229,3 +229,112 @@ class TestRunBurnLoop:
         )
 
         assert call_count >= 2
+
+    def test_returns_budget_state_on_auth_failure(self):
+        state = make_initial_state()
+        config = make_config(budget_tokens=10_000)
+        auth_fail = RunResult(
+            prompt_category="review",
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cost_usd=0.0,
+            duration_ms=0,
+            success=False,
+            error_message="not logged in — please login first",
+        )
+        runner = FakeRunner(result=auth_fail)
+        logger = FakeLogger()
+
+        result = run_burn_loop(
+            config=config,
+            repo_files=[make_file()],
+            initial_state=state,
+            runner=runner,
+            logger=logger,
+            delay_fn=lambda ms, s: None,
+            random_fn=random.Random(42).random,
+        )
+
+        assert result is not None
+        assert isinstance(result, BudgetState)
+
+    def test_skips_prompt_outside_working_hours(self):
+        state = make_initial_state()
+        config = make_config(budget_tokens=2000, working_hours_only=True)
+        runner = FakeRunner(result=make_success_result(tokens=1500))
+        logger = FakeLogger()
+        delays: list[float] = []
+        hour_calls = 0
+
+        def night_then_day() -> int:
+            nonlocal hour_calls
+            hour_calls += 1
+            if hour_calls <= 1:
+                return 3  # 3 AM — outside work window
+            return 10     # 10 AM — inside work window
+
+        run_burn_loop(
+            config=config,
+            repo_files=[make_file()],
+            initial_state=state,
+            runner=runner,
+            logger=logger,
+            delay_fn=lambda ms, s: delays.append(ms),
+            random_fn=random.Random(42).random,
+            local_hour_fn=night_then_day,
+        )
+
+        event_names = [e.get("event") for e in logger.events]
+        assert "outside_work_hours" in event_names
+        assert runner.call_count >= 1
+
+    def test_no_work_hours_check_when_flag_off(self):
+        state = make_initial_state()
+        config = make_config(budget_tokens=1000, working_hours_only=False)
+        runner = FakeRunner(result=make_success_result(tokens=700))
+        logger = FakeLogger()
+
+        run_burn_loop(
+            config=config,
+            repo_files=[make_file()],
+            initial_state=state,
+            runner=runner,
+            logger=logger,
+            delay_fn=lambda ms, s: None,
+            random_fn=random.Random(42).random,
+            local_hour_fn=lambda: 3,  # 3 AM, but flag is off
+        )
+
+        event_names = [e.get("event") for e in logger.events]
+        assert "outside_work_hours" not in event_names
+        assert runner.call_count >= 1
+
+    def test_returns_budget_state_on_too_many_consecutive_failures(self):
+        state = make_initial_state()
+        config = make_config(budget_tokens=10_000)
+        fail = RunResult(
+            prompt_category="review",
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cost_usd=0.0,
+            duration_ms=0,
+            success=False,
+            error_message="network error",
+        )
+        runner = FakeRunner(result=fail)
+        logger = FakeLogger()
+
+        result = run_burn_loop(
+            config=config,
+            repo_files=[make_file()],
+            initial_state=state,
+            runner=runner,
+            logger=logger,
+            delay_fn=lambda ms, s: None,
+            random_fn=random.Random(42).random,
+        )
+
+        assert result is not None
+        assert isinstance(result, BudgetState)

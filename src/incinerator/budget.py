@@ -27,6 +27,7 @@ def apply_run_result(state: BudgetState, result: RunResult) -> BudgetState:
         run_count=state.run_count + 1,
         started_at=state.started_at,
         last_run_at=datetime.now(tz=timezone.utc),
+        next_run_at=None,  # cleared after run; delay_fn sets it again
     )
 
 

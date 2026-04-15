@@ -67,7 +67,6 @@ def fork_daemon(config: DaemonConfig, state_dir: Optional[str] = None) -> int:
     with open(log_file, "a") as log_fh:
         child = subprocess.Popen(
             [sys.executable, "-m", "incinerator.cli", "__daemon__", config.model_dump_json()],
-            detach=False,  # will be handled via start_new_session
             stdout=log_fh,
             stderr=log_fh,
             stdin=subprocess.DEVNULL,

@@ -38,6 +38,27 @@ def sample_session_duration_ms(random_fn: Callable[[], float]) -> float:
     return max(min_ms, min(max_ms, raw))
 
 
+_WORK_THRESHOLD = 0.05
+
+
+def is_within_work_window(hour: int) -> bool:
+    """True when the given local hour falls inside the simulated workday."""
+    return workday_weight(hour) >= _WORK_THRESHOLD
+
+
+def seconds_until_work_window(hour: int) -> float:
+    """Return seconds until the next hour where workday_weight >= threshold.
+
+    Called when current hour is outside the work window. Returns how long
+    to sleep before rechecking. Always returns a positive value.
+    """
+    for hours_ahead in range(1, 25):
+        candidate = (hour + hours_ahead) % 24
+        if workday_weight(candidate) >= _WORK_THRESHOLD:
+            return hours_ahead * 3600.0
+    return 3600.0  # fallback: try again in an hour
+
+
 def workday_weight(hour: int) -> float:
     """Return a 0.0–1.0 activity weight for the given hour of day (0–23).
 
