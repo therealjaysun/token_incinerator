@@ -168,29 +168,3 @@ All state lives in `~/.incinerator/`:
 | `incinerator_config.json` | Active configuration |
 | `state.json` | Cumulative token/cost/run counts |
 | `incinerator.log` | JSON-lines event log |
-
-## Auth errors
-
-Before forking the daemon, `incinerator start` runs a preflight check against the Claude CLI. If you're not logged in:
-
-```
-Error: Claude is not logged in.
-Run 'claude login' to authenticate, then retry.
-```
-
-If auth fails mid-session (e.g. token expiry), the daemon logs a `fatal_error` event and shuts down cleanly rather than retrying in a loop.
-
-## Development
-
-```bash
-# Install dev dependencies
-pip install -e .
-
-# Run tests
-pytest
-
-# Run only integration tests
-pytest tests/test_integration.py -v
-```
-
-104 tests across unit, integration, and daemon lifecycle coverage.
