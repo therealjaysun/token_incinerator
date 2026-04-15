@@ -57,6 +57,9 @@ class TestIsAuthError:
         assert not is_auth_error("timeout after 300 seconds")
         assert not is_auth_error("model not found")
 
+    def test_ignores_login_substring_in_unrelated_error(self):
+        assert not is_auth_error("failed to process login_handler module")
+
 
 class TestCheckClaudeAuth:
     def test_returns_false_when_claude_not_on_path(self):

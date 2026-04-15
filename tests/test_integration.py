@@ -14,9 +14,11 @@ import sys
 import time
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
+import incinerator.cli as cli_module
 from incinerator.budget import make_initial_state
 from incinerator.cli import cli
 from incinerator.logger import FileLogger
@@ -243,6 +245,26 @@ class TestStatePersistence:
 # ---------------------------------------------------------------------------
 
 class TestCliCommands:
+    def test_parse_duration_accepts_supported_suffixes(self) -> None:
+        assert cli_module._parse_duration("2h") == 7200
+        assert cli_module._parse_duration("30m") == 1800
+        assert cli_module._parse_duration("45s") == 45
+        assert cli_module._parse_duration("90") == 90
+
+    @pytest.mark.parametrize("value", ["", "h", "1.5h", "-2h", "0m", "abc"])
+    def test_parse_duration_rejects_invalid_values(self, value: str) -> None:
+        with pytest.raises(click.BadParameter):
+            cli_module._parse_duration(value)
+
+    def test_atomic_write_replaces_existing_file_contents(self, tmp_path: Path) -> None:
+        target = tmp_path / "state.json"
+        target.write_text("old")
+
+        cli_module._atomic_write(target, "new")
+
+        assert target.read_text() == "new"
+        assert not list(tmp_path.glob("*.tmp"))
+
     def test_root_help_includes_subcommand_options(self) -> None:
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])

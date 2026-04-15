@@ -18,7 +18,6 @@ _AUTH_ERROR_SIGNALS = (
     "401",
     "api key",
     "invalid credentials",
-    "login",
 )
 
 _USAGE_LIMIT_ERROR_SIGNALS = (

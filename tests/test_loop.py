@@ -7,6 +7,7 @@ import pytest
 from incinerator.budget import make_initial_state
 from incinerator.loop import run_burn_loop
 from incinerator.schemas import BudgetState, DaemonConfig
+from incinerator.timing import sample_exponential_ms
 from incinerator.types import BurnPrompt, PromptCategory, RepoFile, RunResult
 
 
@@ -151,6 +152,66 @@ class TestRunBurnLoop:
 
         assert len(delays) >= 1
 
+    def test_uses_fixed_rate_delay_when_not_statistical(self):
+        state = make_initial_state()
+        config = make_config(budget_tokens=1000, rate_per_hour=3600, statistical=False)
+        result = RunResult(
+            prompt_category="review",
+            input_tokens=100,
+            output_tokens=100,
+            cache_read_tokens=0,
+            cost_usd=0.01,
+            duration_ms=1000,
+            success=True,
+        )
+        runner = FakeRunner(result=result)
+        logger = FakeLogger()
+        delays: list[float] = []
+
+        run_burn_loop(
+            config=config,
+            repo_files=[make_file()],
+            initial_state=state,
+            runner=runner,
+            logger=logger,
+            delay_fn=lambda ms, s: delays.append(ms),
+            random_fn=random.Random(42).random,
+        )
+
+        assert delays[0] == 0.0
+        assert all(delay == 1000.0 for delay in delays[1:])
+
+    def test_uses_poisson_delay_when_statistical(self):
+        state = make_initial_state()
+        config = make_config(budget_tokens=1000, rate_per_hour=3600, statistical=True)
+        result = RunResult(
+            prompt_category="review",
+            input_tokens=100,
+            output_tokens=100,
+            cache_read_tokens=0,
+            cost_usd=0.01,
+            duration_ms=1000,
+            success=True,
+        )
+        runner = FakeRunner(result=result)
+        logger = FakeLogger()
+        delays: list[float] = []
+        random_fn = lambda: 0.5
+
+        run_burn_loop(
+            config=config,
+            repo_files=[make_file()],
+            initial_state=state,
+            runner=runner,
+            logger=logger,
+            delay_fn=lambda ms, s: delays.append(ms),
+            random_fn=random_fn,
+        )
+
+        expected_delay = sample_exponential_ms(rate_per_hour=3600, random_fn=lambda: 0.5)
+        assert delays[0] == 0.0
+        assert delays[1] == pytest.approx(expected_delay)
+
     def test_logs_each_run(self):
         state = make_initial_state()
         config = make_config(budget_tokens=1000)
@@ -288,6 +349,7 @@ class TestRunBurnLoop:
         event_names = [e.get("event") for e in logger.events]
         assert "outside_work_hours" in event_names
         assert runner.call_count >= 1
+        assert delays[0] == 300_000.0
 
     def test_no_work_hours_check_when_flag_off(self):
         state = make_initial_state()

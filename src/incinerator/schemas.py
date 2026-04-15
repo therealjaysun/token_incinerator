@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class ClaudeUsage(BaseModel):
@@ -23,7 +23,7 @@ class ClaudeJsonOutput(BaseModel):
 
 class DaemonConfig(BaseModel):
     repo_path: str
-    rate_per_hour: int = Field(default=5000, gt=0)
+    rate_per_hour: int = Field(default=12000, gt=0)
     model: Optional[str] = None
     claude_path: str = "claude"
     working_hours_only: bool = False

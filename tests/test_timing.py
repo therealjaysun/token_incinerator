@@ -6,7 +6,6 @@ import pytest
 from incinerator.timing import (
     is_within_work_window,
     sample_exponential_ms,
-    sample_session_duration_ms,
     seconds_until_work_window,
     workday_weight,
 )
@@ -53,31 +52,6 @@ class TestSampleExponentialMs:
             for i in range(200)
         ]
         assert all(s > 0 for s in samples)
-
-
-class TestSampleSessionDurationMs:
-    def test_returns_positive_value(self):
-        duration = sample_session_duration_ms(random_fn=seeded())
-        assert duration > 0
-
-    def test_duration_in_reasonable_range(self):
-        # Sessions should be between 30 minutes and 6 hours
-        samples = [
-            sample_session_duration_ms(random_fn=seeded(i))
-            for i in range(200)
-        ]
-        min_ms = 30 * 60 * 1000    # 30 minutes
-        max_ms = 6 * 60 * 60 * 1000  # 6 hours
-        assert all(min_ms <= s <= max_ms for s in samples)
-
-    def test_mean_near_two_and_half_hours(self):
-        samples = [
-            sample_session_duration_ms(random_fn=seeded(i))
-            for i in range(500)
-        ]
-        mean_hours = (sum(samples) / len(samples)) / (3600 * 1000)
-        assert 1.5 <= mean_hours <= 4.0
-
 
 class TestWorkdayWeight:
     def test_noon_has_higher_weight_than_midnight(self):

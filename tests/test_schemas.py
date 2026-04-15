@@ -26,7 +26,7 @@ def make_valid_claude_output() -> dict:
 def make_valid_daemon_config() -> dict:
     return {
         "repo_path": "/home/user/myproject",
-        "rate_per_hour": 5000,
+        "rate_per_hour": 12000,
         "model": "claude-opus-4-6",
         "working_hours_only": False,
     }
@@ -63,11 +63,11 @@ class TestDaemonConfig:
     def test_parses_valid_config(self):
         config = DaemonConfig.model_validate(make_valid_daemon_config())
         assert config.repo_path == "/home/user/myproject"
-        assert config.rate_per_hour == 5000
+        assert config.rate_per_hour == 12000
 
     def test_applies_defaults(self):
         config = DaemonConfig.model_validate({"repo_path": "/some/repo"})
-        assert config.rate_per_hour == 5000
+        assert config.rate_per_hour == 12000
         assert config.model is None
         assert config.working_hours_only is False
 

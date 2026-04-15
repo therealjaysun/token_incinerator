@@ -40,11 +40,3 @@ class RunResult:
     duration_ms: int
     success: bool
     error_message: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class DaemonStatus:
-    running: bool
-    pid: Optional[int]
-    budget_state: Optional[object]  # BudgetState from schemas
-    config: Optional[object]        # DaemonConfig from schemas

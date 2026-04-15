@@ -13,6 +13,44 @@ from rich.text import Text
 
 from incinerator.schemas import BudgetState, DaemonConfig
 
+_SPINNER_VERBS = (
+    "wasting",
+    "being annoying",
+    "degenerating",
+    "hallucinating",
+    "gaslighting",
+    "yapping",
+    "coping",
+    "imploding",
+    "retrying (again…)",
+    "panicking",
+    "spiraling",
+    "global warming",
+    "polarbear clubbing",
+    "Allbirds-ing",
+    "bugging",
+    "lgtm-ing"
+    "rugpulling",
+    "tweeting into the void",
+    "losing money",
+    "overthinking",
+    "panic selling",
+    "aping in",
+    "doomscrolling",
+    "shitposting",
+    "bagholding",
+    "burning VC money",
+    "pretending to work",
+    "rewriting in Rust",
+    "replying gm",
+    "replying wagmi",
+    "deploying to mainnet on Friday",
+    "printing tokens",
+    "vibecoding",
+)
+
+_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
 
 def _fmt_elapsed(seconds: float) -> str:
     seconds = int(seconds)
@@ -47,13 +85,20 @@ def _fmt_next_run(next_run_at: Optional[datetime]) -> str:
     return f"in {_fmt_elapsed(remaining)}"
 
 
+def _spinner_status(tick: int) -> Text:
+    verb = _SPINNER_VERBS[(tick // 3) % len(_SPINNER_VERBS)]
+    frame = _SPINNER_FRAMES[tick % len(_SPINNER_FRAMES)]
+    return Text(f"{frame} {verb}...", style="bold green")
+
+
 def render_display(
     state: BudgetState,
     config: DaemonConfig,
     elapsed_seconds: float,
     is_running: bool,
+    tick: int = 0,
 ) -> object:
-    status_text = Text("● RUNNING", style="bold green") if is_running else Text("■ STOPPED", style="bold red")
+    status_text = _spinner_status(tick) if is_running else Text("■ STOPPED", style="bold red")
 
     # --- Stats table ---
     stats = Table.grid(padding=(0, 2))
@@ -77,7 +122,7 @@ def render_display(
         if config.statistical:
             stats.add_row("Next run", _fmt_next_run(state.next_run_at))
         else:
-            stats.add_row("Mode", "continuous")
+            stats.add_row("Mode", "steady")
 
     # --- Budget progress ---
     budget_lines: list[object] = []
@@ -139,6 +184,7 @@ def watch_loop(state_dir: str, poll_interval: float = 1.0) -> None:
     state_file = Path(state_dir) / "state.json"
 
     try:
+        tick = 0
         with Live(refresh_per_second=2, screen=False) as live:
             while True:
                 pid_info = mgr.read()
@@ -161,7 +207,9 @@ def watch_loop(state_dir: str, poll_interval: float = 1.0) -> None:
                     config=config,
                     elapsed_seconds=elapsed_from_state(state),
                     is_running=is_running,
+                    tick=tick,
                 ))
+                tick += 1
 
                 if not is_running:
                     time.sleep(0.5)

@@ -60,10 +60,10 @@ incinerator start --repo /path/to/your/repo [options]
 | `--tokens N` | Stop after burning N tokens | — |
 | `--usd N` | Stop after spending $N | — |
 | `--duration 2h` | Stop after a time duration (`2h`, `30m`, `3600s`) | — |
-| `--rate N` | Target tokens/hour, controls inter-request pacing | `5000` |
+| `--rate N` | Target tokens/hour, controls inter-request pacing | `12000` |
 | `--model MODEL` | Claude model to use | Claude's own default |
-| `--working-hours-only` | Only burn during 9am–5pm local time | off |
-| `--statistical` | Use Poisson-distributed timing (default mode is continuous/no delay) | off |
+| `--working-hours-only` | Only burn during a simulated workday activity window | off |
+| `--statistical` | Use Poisson-distributed timing (default mode is steady rate) | off |
 | `--help` | Show command help and exit | — |
 
 Any combination of `--tokens`, `--usd`, and `--duration` can be set — the incinerator stops when the **first** limit is reached. With no budget flags it runs indefinitely until stopped manually.
@@ -98,7 +98,7 @@ incinerator status --help
 Status: RUNNING (PID 48291)
 Repo:   /Users/you/my-project
 Model:  (claude default)
-Rate:   5,000 tokens/hr
+Rate:   12,000 tokens/hr
 
 Spend so far:
   Tokens:  12,400
@@ -158,7 +158,7 @@ Each prompt embeds real file paths from your repo so Claude reads them, burning 
 
 ## Timing
 
-Inter-request delays follow an exponential distribution (Poisson process) with mean `3,600,000ms / rate`. At the default rate of 5,000 tokens/hour, the mean delay between requests is about 12 minutes. Requests naturally cluster and space out, matching the statistical signature of a developer working through a task.
+By default, the incinerator uses a steady delay of `3,600,000ms / rate` between requests. At the default rate of 12,000 tokens/hour, that works out to about 5 minutes between runs. When `--statistical` is enabled, delays follow an exponential distribution (Poisson process) with the same mean, so requests naturally cluster and spread out to better mimic realistic activity.
 
 ## State files
 

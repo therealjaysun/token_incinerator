@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 import random
+import re
 import signal
 import sys
 import time
@@ -13,8 +13,8 @@ from typing import Optional
 import click
 
 from incinerator.budget import is_exhausted, make_initial_state
-from incinerator.daemon import PidFileManager, fork_daemon, is_daemon_process
-from incinerator.logger import FileLogger, StderrLogger
+from incinerator.daemon import PidFileManager, fork_daemon
+from incinerator.logger import FileLogger
 from incinerator.loop import run_burn_loop
 from incinerator.repo import walk_repo
 from incinerator.runner import ClaudeRunner, check_claude_auth
@@ -22,6 +22,7 @@ from incinerator.schemas import DaemonConfig
 from incinerator.watch import watch_loop
 
 _STATE_DIR = str(Path.home() / ".incinerator")
+_DURATION_RE = re.compile(r"^(?P<value>[1-9]\d*)(?P<unit>[hms]?)$")
 
 
 class _RootHelpGroup(click.Group):
@@ -50,10 +51,10 @@ def cli() -> None:
 @click.option("--tokens", default=None, type=int, help="Token budget (stop after N tokens)")
 @click.option("--usd", default=None, type=float, help="USD budget (stop after $N)")
 @click.option("--duration", default=None, type=str, help="Duration budget e.g. 2h, 30m, 3600s")
-@click.option("--rate", default=5000, type=int, help="Target tokens/hour (controls pacing, only used with --statistical)")
+@click.option("--rate", default=12000, type=int, help="Target tokens/hour (controls pacing)")
 @click.option("--model", default=None, help="Claude model to use (default: Claude's own default)")
-@click.option("--working-hours-only", is_flag=True, default=False, help="Only burn during 9am-5pm")
-@click.option("--statistical", is_flag=True, default=False, help="Use Poisson-distributed request timing to mimic natural pacing (default: fire continuously)")
+@click.option("--working-hours-only", is_flag=True, default=False, help="Only burn during a simulated workday activity window")
+@click.option("--statistical", is_flag=True, default=False, help="Use Poisson-distributed request timing to mimic natural pacing (default: steady rate)")
 def start(
     repo: str,
     tokens: Optional[int],
@@ -100,7 +101,7 @@ def start(
     if statistical:
         click.echo(f"Mode: statistical ({rate:,} tokens/hr target)")
     else:
-        click.echo("Mode: continuous (no delay between requests)")
+        click.echo(f"Mode: steady ({rate:,} tokens/hr target)")
     click.echo("")
 
     try:
@@ -195,7 +196,7 @@ def daemon_entry(config_json: str) -> None:
 
     def save_state(s: "BudgetState") -> None:
         current_state[0] = s
-        state_file.write_text(s.model_dump_json())
+        _atomic_write(state_file, s.model_dump_json())
 
     def delay_fn(ms: float, s: "BudgetState") -> None:
         from incinerator.schemas import BudgetState as _BS
@@ -214,7 +215,7 @@ def daemon_entry(config_json: str) -> None:
 
     def handle_sigterm(signum: int, frame: object) -> None:
         logger.log({"event": "daemon_stopped", "reason": "SIGTERM"})
-        state_file.write_text(current_state[0].model_dump_json())
+        _atomic_write(state_file, current_state[0].model_dump_json())
         mgr.remove()
         sys.exit(0)
 
@@ -238,14 +239,29 @@ def daemon_entry(config_json: str) -> None:
 
 
 def _parse_duration(s: str) -> int:
-    s = s.strip().lower()
-    if s.endswith("h"):
-        return int(s[:-1]) * 3600
-    if s.endswith("m"):
-        return int(s[:-1]) * 60
-    if s.endswith("s"):
-        return int(s[:-1])
-    return int(s)
+    value = s.strip().lower()
+    if not value:
+        raise click.BadParameter("Duration must be a positive integer followed by optional h, m, or s.")
+
+    match = _DURATION_RE.fullmatch(value)
+    if match is None:
+        raise click.BadParameter(
+            f"Invalid duration {s!r}. Use a positive integer with optional h, m, or s suffix, for example 2h, 30m, or 3600s."
+        )
+
+    amount = int(match.group("value"))
+    unit = match.group("unit")
+    if unit == "h":
+        return amount * 3600
+    if unit == "m":
+        return amount * 60
+    return amount
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    temp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temp_path.write_text(content)
+    os.replace(temp_path, path)
 
 
 if __name__ == "__main__":

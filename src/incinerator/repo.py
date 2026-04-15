@@ -80,7 +80,6 @@ def sample_weighted_files(
     if not weighted:
         return []
     count = min(count, len(weighted))
-    total = sum(w.weight for w in weighted)
     selected: list[RepoFile] = []
     remaining = list(weighted)
     for _ in range(count):

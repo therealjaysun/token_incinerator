@@ -31,7 +31,7 @@ def make_state(
 
 
 def make_config(**kwargs) -> DaemonConfig:
-    defaults = dict(repo_path="/home/user/myproject", rate_per_hour=5000)
+    defaults = dict(repo_path="/home/user/myproject", rate_per_hour=12000)
     defaults.update(kwargs)
     return DaemonConfig(**defaults)
 
@@ -78,8 +78,26 @@ class TestRenderDisplay:
             config=make_config(),
             elapsed_seconds=60,
             is_running=True,
+            tick=0,
         ))
-        assert "running" in output.lower() or "RUNNING" in output
+        assert "wasting" in output.lower()
+
+    def test_rotates_spinner_frame_every_tick_but_verb_every_three_ticks(self):
+        base_kwargs = dict(
+            state=make_state(),
+            config=make_config(),
+            elapsed_seconds=60,
+            is_running=True,
+        )
+        tick_0 = render_to_text(render_display(tick=0, **base_kwargs))
+        tick_1 = render_to_text(render_display(tick=1, **base_kwargs))
+        tick_2 = render_to_text(render_display(tick=2, **base_kwargs))
+        tick_3 = render_to_text(render_display(tick=3, **base_kwargs))
+
+        assert "wasting" in tick_0.lower()
+        assert "wasting" in tick_1.lower()
+        assert "wasting" in tick_2.lower()
+        assert "being annoying" in tick_3.lower()
 
     def test_shows_stopped_status(self):
         output = render_to_text(render_display(
@@ -116,7 +134,7 @@ class TestRenderDisplay:
             elapsed_seconds=600,
             is_running=True,
         ))
-        # Should show something like "25,000 / 100,000" or a percentage
+        # Should show something like "12,000 / 100,000" or a percentage
         assert "100,000" in output or "100000" in output or "25%" in output
 
     def test_shows_usd_budget_progress_when_set(self):
@@ -188,14 +206,14 @@ class TestRenderDisplay:
         ))
         assert "next run" in output.lower()
 
-    def test_shows_continuous_mode_when_not_statistical(self):
+    def test_shows_steady_mode_when_not_statistical(self):
         output = render_to_text(render_display(
             state=make_state(),
             config=make_config(statistical=False),
             elapsed_seconds=60,
             is_running=True,
         ))
-        assert "continuous" in output.lower()
+        assert "steady" in output.lower()
 
     def test_elapsed_from_state_reflects_session_start(self):
         started = datetime(2026, 4, 15, 8, 0, tzinfo=timezone.utc)

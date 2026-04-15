@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import random as _random
 import threading
-import time
 from typing import Callable, Protocol
 
 from incinerator.budget import apply_run_result, is_exhausted
@@ -24,6 +22,7 @@ _CATEGORIES: list[PromptCategory] = [
 _FILES_PER_PROMPT = 5
 _MAX_CONSECUTIVE_FAILURES = 3
 _HEARTBEAT_INTERVAL_SECONDS = 30
+_MAX_OFF_HOURS_SLEEP_SECONDS = 300.0
 
 
 class Runner(Protocol):
@@ -60,12 +59,14 @@ def run_burn_loop(
             hour = local_hour_fn()
             if not is_within_work_window(hour):
                 wait_s = seconds_until_work_window(hour)
+                sleep_s = min(wait_s, _MAX_OFF_HOURS_SLEEP_SECONDS)
                 logger.log({
                     "event": "outside_work_hours",
                     "current_hour": hour,
                     "wait_seconds": wait_s,
+                    "sleep_seconds": sleep_s,
                 })
-                delay_fn(wait_s * 1000, state)
+                delay_fn(sleep_s * 1000, state)
                 continue
 
         category = _CATEGORIES[category_index % len(_CATEGORIES)]
@@ -125,8 +126,8 @@ def run_burn_loop(
             break
 
         if first_run or not config.statistical:
-            delay_ms = 0.0
-        else:
+            delay_ms = 0.0 if first_run else 3_600_000 / config.rate_per_hour
+        if config.statistical and not first_run:
             delay_ms = sample_exponential_ms(
                 rate_per_hour=config.rate_per_hour,
                 random_fn=random_fn,
