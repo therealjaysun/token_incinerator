@@ -1,5 +1,7 @@
 # Token Incinerator
 
+<img src="logo.png" alt="Token Incinerator" width="200" />
+
 A background CLI tool that burns Claude tokens to maintain AI adoption KPIs. It reads your codebase, generates contextually plausible (but unproductive) requests, and fires them at the Claude Code CLI with statistically obfuscated timing — like a mouse jiggler, but for token usage dashboards.
 
 ## How it works
