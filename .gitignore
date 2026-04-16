@@ -21,7 +21,8 @@ env/
 .env.local
 .envrc
 
-# Testing & coverage
+# Testing & coverage (tests/ committed on dev only; main excludes tests)
+tests/
 .pytest_cache/
 .coverage
 .coverage.*
