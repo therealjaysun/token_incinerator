@@ -94,9 +94,10 @@ class ClaudeRunner:
         cmd = [
             self._claude_path,
             "-p", prompt.text,
-            "--allowedTools", "Read,Grep,Glob",
             "--output-format", "json",
             "--no-session-persistence",
+            "--max-turns", "1",
+            "--allowedTools", "",
         ]
         if self._model is not None:
             cmd += ["--model", self._model]

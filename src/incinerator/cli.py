@@ -51,16 +51,14 @@ def cli() -> None:
 @click.option("--tokens", default=None, type=int, help="Token budget (stop after N tokens)")
 @click.option("--usd", default=None, type=float, help="USD budget (stop after $N)")
 @click.option("--duration", default=None, type=str, help="Duration budget e.g. 2h, 30m, 3600s")
-@click.option("--rate", default=12000, type=int, help="Target tokens/hour (controls pacing)")
 @click.option("--model", default=None, help="Claude model to use (default: Claude's own default)")
 @click.option("--working-hours-only", is_flag=True, default=False, help="Only burn during a simulated workday activity window")
-@click.option("--statistical", is_flag=True, default=False, help="Use Poisson-distributed request timing to mimic natural pacing (default: steady rate)")
+@click.option("--statistical", is_flag=True, default=False, help="Poisson-distributed request timing to mimic natural developer pacing")
 def start(
     repo: str,
     tokens: Optional[int],
     usd: Optional[float],
     duration: Optional[str],
-    rate: int,
     model: Optional[str],
     working_hours_only: bool,
     statistical: bool,
@@ -81,7 +79,6 @@ def start(
 
     config = DaemonConfig(
         repo_path=str(Path(repo).resolve()),
-        rate_per_hour=rate,
         model=model,
         working_hours_only=working_hours_only,
         statistical=statistical,
@@ -99,9 +96,7 @@ def start(
     if duration:
         click.echo(f"Duration: {duration}")
     if statistical:
-        click.echo(f"Mode: statistical ({rate:,} tokens/hr target)")
-    else:
-        click.echo(f"Mode: steady ({rate:,} tokens/hr target)")
+        click.echo("Mode: statistical (natural pacing)")
     click.echo("")
 
     try:
@@ -143,7 +138,7 @@ def status() -> None:
     config: DaemonConfig = result["config"]
     click.echo(f"Repo:   {config.repo_path}")
     click.echo(f"Model:  {config.model or '(claude default)'}")
-    click.echo(f"Rate:   {config.rate_per_hour:,} tokens/hr")
+    click.echo(f"Mode:   {'statistical' if config.statistical else 'full blast'}")
 
     state_file = Path(_STATE_DIR) / "state.json"
     if state_file.exists():
@@ -173,7 +168,6 @@ def daemon_entry(config_json: str) -> None:
     config = DaemonConfig.model_validate_json(config_json)
     state_dir = os.environ.get("INCINERATOR_STATE_DIR", _STATE_DIR)
     mgr = PidFileManager(state_dir=state_dir)
-    mgr.write(pid=os.getpid(), config=config)
 
     logger = FileLogger(log_path=str(Path(state_dir) / "incinerator.log"))
     logger.log({"event": "daemon_started", "pid": os.getpid(), "repo": config.repo_path})
@@ -190,6 +184,9 @@ def daemon_entry(config_json: str) -> None:
     initial_state = make_initial_state()
     state_file = Path(state_dir) / "state.json"
     current_state = [initial_state]  # mutable cell so SIGTERM handler always has latest
+
+    # Write initial state immediately so watch shows correct elapsed from session start.
+    _atomic_write(state_file, initial_state.model_dump_json())
 
     # Deterministic seed derived from session start time — same session = same delay sequence
     rng = random.Random(int(initial_state.started_at.timestamp()))

@@ -10,7 +10,7 @@ from incinerator.runner import is_auth_error, is_usage_limit_error
 from incinerator.schemas import BudgetState, DaemonConfig
 from incinerator.timing import (
     is_within_work_window,
-    sample_exponential_ms,
+    sample_statistical_delay_ms,
     seconds_until_work_window,
 )
 from incinerator.types import BurnPrompt, PromptCategory, RepoFile, RunResult
@@ -19,7 +19,7 @@ _CATEGORIES: list[PromptCategory] = [
     "review", "refactor", "security_audit", "doc_generation", "architecture"
 ]
 
-_FILES_PER_PROMPT = 5
+_FILES_PER_PROMPT = 3
 _MAX_CONSECUTIVE_FAILURES = 3
 _HEARTBEAT_INTERVAL_SECONDS = 30
 _MAX_OFF_HOURS_SLEEP_SECONDS = 300.0
@@ -52,7 +52,6 @@ def run_burn_loop(
     weighted = compute_file_weights(repo_files)
     category_index = 0
     consecutive_failures = 0
-    first_run = True
 
     while not is_exhausted(state, config):
         if config.working_hours_only:
@@ -125,15 +124,10 @@ def run_burn_loop(
             logger.log({"event": "budget_exhausted"})
             break
 
-        if first_run or not config.statistical:
-            delay_ms = 0.0 if first_run else 3_600_000 / config.rate_per_hour
-        if config.statistical and not first_run:
-            delay_ms = sample_exponential_ms(
-                rate_per_hour=config.rate_per_hour,
-                random_fn=random_fn,
-            )
-        first_run = False
-        delay_fn(delay_ms, state)
+        if config.statistical:
+            delay_fn(sample_statistical_delay_ms(random_fn), state)
+        else:
+            delay_fn(0.0, state)
 
     return state
 

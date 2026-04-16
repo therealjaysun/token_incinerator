@@ -22,7 +22,6 @@ env/
 .envrc
 
 # Testing & coverage
-tests/
 .pytest_cache/
 .coverage
 .coverage.*
