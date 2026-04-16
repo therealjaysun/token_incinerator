@@ -2,7 +2,7 @@
 
 <img src="logo.png" alt="Token Incinerator" width="200" />
 
-A background CLI tool that burns Claude tokens to maintain AI adoption KPIs. It samples files from your codebase, builds high-burn prompts, and fires them at the Claude Code CLI — like a mouse jiggler, but for token usage dashboards.
+A background CLI tool that burns Claude tokens to maintain AI adoption KPIs. It reads your codebase, generates contextually plausible (but unproductive) requests, and fires them at the Claude Code CLI with statistically obfuscated timing — like a mouse jiggler, but for token usage dashboards.
 
 ## How it works
 
@@ -166,7 +166,3 @@ All state lives in `~/.incinerator/`:
 | `incinerator_config.json` | Active configuration |
 | `state.json` | Cumulative token/cost/run counts |
 | `incinerator.log` | JSON-lines event log (also shown in the watch **Activity Log**) |
-
-## Development
-
-Tests and fixtures live under `tests/` on the **`dev`** branch. **`main`** is shipped without that tree; `.gitignore` lists `tests/` so local checkouts match. Run tests from a `dev` checkout: `pytest`.
