@@ -2,15 +2,15 @@
 
 <img src="logo.png" alt="Token Incinerator" width="200" />
 
-A background CLI tool that burns Claude tokens to maintain AI adoption KPIs. It reads your codebase, generates contextually plausible (but unproductive) requests, and fires them at the Claude Code CLI with statistically obfuscated timing — like a mouse jiggler, but for token usage dashboards.
+A background CLI tool that burns Claude tokens to maintain AI adoption KPIs. It samples files from your codebase, builds high-burn prompts, and fires them at the Claude Code CLI — like a mouse jiggler, but for token usage dashboards.
 
 ## How it works
 
-1. Walks your target repo and weights files by size and type
-2. Generates high-burn prompts (code review, security audit, refactor plan, architecture analysis, doc generation) that reference real file paths so Claude reads them
-3. Paces requests using a Poisson process to mimic organic developer behavior
-4. All requests use `--allowedTools Read,Grep,Glob` — Claude can't write files or commit anything
-5. Runs detached in the background; tracks spend in `~/.incinerator/`
+1. Walks your target repo and weights files by size and type (common junk dirs pruned).
+2. Rotates through five prompt categories (review, refactor, security audit, docs, architecture). Each prompt **embeds file contents** (truncated per file) so Claude answers in one shot — no multi-turn tool reads.
+3. Runs **`claude`** with `--output-format json`, **`--max-turns 1`**, and **no tools** (`--allowedTools ""`), so each run is a single completion. Token and cost counts come from the JSON `usage` and `total_cost_usd` fields returned by the CLI.
+4. **Default pacing:** back-to-back runs (no artificial delay) — throughput is limited by how fast each completion returns. **`--statistical`** adds Poisson-distributed gaps between runs (~30s mean) to mimic organic activity (fixed internal rate, not configurable).
+5. Runs detached in the background; **`incinerator start`** attaches a live **watch** (stats, budget bars, **activity log** tailing `~/.incinerator/incinerator.log`, animated status line).
 
 ## Requirements
 
@@ -56,31 +56,32 @@ incinerator start --repo /path/to/your/repo [options]
 
 | Flag | Description | Default |
 |---|---|---|
-| `--repo PATH` | Target repository to read for context (required) | — |
+| `--repo PATH` | Target repository (required) | — |
 | `--tokens N` | Stop after burning N tokens | — |
 | `--usd N` | Stop after spending $N | — |
-| `--duration 2h` | Stop after a time duration (`2h`, `30m`, `3600s`) | — |
-| `--rate N` | Target tokens/hour, controls inter-request pacing | `12000` |
+| `--duration 2h` | Stop after a time budget (`2h`, `30m`, `3600s`) | — |
 | `--model MODEL` | Claude model to use | Claude's own default |
 | `--working-hours-only` | Only burn during a simulated workday activity window | off |
-| `--statistical` | Use Poisson-distributed timing (default mode is steady rate) | off |
+| `--statistical` | Poisson-distributed delays between runs (natural pacing) | off (full blast) |
 | `--help` | Show command help and exit | — |
 
-Any combination of `--tokens`, `--usd`, and `--duration` can be set — the incinerator stops when the **first** limit is reached. With no budget flags it runs indefinitely until stopped manually.
+There is **no `--rate` flag** — default mode runs the next prompt as soon as the previous one finishes.
+
+Any combination of `--tokens`, `--usd`, and `--duration` can be set — the incinerator stops when the **first** limit is reached. With no budget flags it runs until you stop it manually.
 
 **Examples:**
 
 ```bash
-# Burn $10 against your project at a natural pace
+# Burn $10 against your project (back-to-back runs)
 incinerator start --repo ~/my-project --usd 10.00
 
-# Burn 500k tokens over at most 4 hours
+# Burn up to 500k tokens, stop after 4 hours at the latest
 incinerator start --repo ~/my-project --tokens 500000 --duration 4h
 
-# Aggressive rate, multiple limits
-incinerator start --repo ~/my-project --usd 5.00 --tokens 200000 --rate 15000
+# Natural-looking gaps between runs (~30s average between completions)
+incinerator start --repo ~/my-project --usd 5.00 --statistical
 
-# Only active during work hours
+# Only active during simulated work hours
 incinerator start --repo ~/my-project --usd 20.00 --working-hours-only
 ```
 
@@ -90,15 +91,13 @@ incinerator start --repo ~/my-project --usd 20.00 --working-hours-only
 incinerator status
 ```
 
-```bash
-incinerator status --help
-```
+Example output:
 
 ```
 Status: RUNNING (PID 48291)
 Repo:   /Users/you/my-project
 Model:  (claude default)
-Rate:   12,000 tokens/hr
+Mode:   full blast
 
 Spend so far:
   Tokens:  12,400
@@ -107,14 +106,12 @@ Spend so far:
   Last:    14:23:07
 ```
 
+With `--statistical`, `Mode:` shows `statistical` instead of `full blast`.
+
 ### Stop
 
 ```bash
 incinerator stop
-```
-
-```bash
-incinerator stop --help
 ```
 
 Sends SIGTERM to the background process. State is saved before exit.
@@ -125,9 +122,7 @@ Sends SIGTERM to the background process. State is saved before exit.
 incinerator watch
 ```
 
-```bash
-incinerator watch --help
-```
+Reconnects to the same live display as `start` (token/cost stats, budget progress, **Activity Log** with recent daemon events, animated status when running).
 
 ### Logs
 
@@ -144,21 +139,22 @@ Each line is a JSON object:
 
 ## Prompt categories
 
-The incinerator rotates through five prompt types, each designed to maximize token consumption:
+The incinerator cycles through five categories. Prompts are **short, focused asks** (code review bullets, security findings, refactor notes, etc.) with **embedded file excerpts** (binary extensions and null-byte files skipped). Every prompt ends with a plan-only suffix: no shell commands, no writes, no commits.
 
 | Category | What it asks Claude to do |
 |---|---|
-| `review` | Full senior-engineer code review — bugs, architecture, performance, all issues cited by file/line |
-| `refactor` | Complete refactor plan with new module structure, rewritten files, and risk assessment |
-| `security_audit` | Threat model, CWE-classified vulnerabilities, CVSS scores, remediation code |
-| `doc_generation` | Architecture diagrams, full API reference, developer guide, troubleshooting guide |
-| `architecture` | Current vs. target architecture, anti-pattern identification, ADRs, migration tickets |
+| `review` | Top issues per file with line references and fixes |
+| `refactor` | SRP violations and concrete refactor suggestions |
+| `security_audit` | Vulnerabilities with severity and one-line fixes |
+| `doc_generation` | API-style docs for public symbols |
+| `architecture` | ASCII diagram, concerns, improvements |
 
-Each prompt embeds real file paths from your repo so Claude reads them, burning input context tokens. All prompts end with an instruction to plan only and not write or execute anything.
+## Timing and modes
 
-## Timing
-
-By default, the incinerator uses a steady delay of `3,600,000ms / rate` between requests. At the default rate of 12,000 tokens/hour, that works out to about 5 minutes between runs. When `--statistical` is enabled, delays follow an exponential distribution (Poisson process) with the same mean, so requests naturally cluster and spread out to better mimic realistic activity.
+| Mode | Behavior |
+|---|---|
+| **Full blast** (default) | No extra delay between runs — only Claude latency and your budgets cap speed. |
+| **`--statistical`** | After each successful run, sleep a random time from an exponential distribution with mean ~**30 seconds** between starts (~120 runs/hour target). |
 
 ## State files
 
@@ -169,4 +165,8 @@ All state lives in `~/.incinerator/`:
 | `incinerator.pid` | PID of the running daemon |
 | `incinerator_config.json` | Active configuration |
 | `state.json` | Cumulative token/cost/run counts |
-| `incinerator.log` | JSON-lines event log |
+| `incinerator.log` | JSON-lines event log (also shown in the watch **Activity Log**) |
+
+## Development
+
+Tests and fixtures live under `tests/` on the **`dev`** branch. **`main`** is shipped without that tree; `.gitignore` lists `tests/` so local checkouts match. Run tests from a `dev` checkout: `pytest`.
