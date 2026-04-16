@@ -4,6 +4,8 @@ from typing import Callable
 
 from incinerator.types import BurnPrompt, PromptCategory, RepoFile
 
+_MAX_FILE_CHARS = 6_000
+
 _PLAN_ONLY_SUFFIX = (
     "\n\nIMPORTANT: This is a planning and analysis exercise only. "
     "Do not execute any commands, do not write any files, do not make any git commits or pushes. "
@@ -12,97 +14,78 @@ _PLAN_ONLY_SUFFIX = (
 
 _TEMPLATES: dict[PromptCategory, str] = {
     "review": """\
-Perform a thorough, senior-engineer-level code review of this codebase. Start by reading each of \
-the following files in full:
+Code review the following files. For each file, list the top 3 issues \
+(bugs, quality, or design) with the exact line and a one-sentence fix.
 
-{file_list}
-
-After reading them, identify:
-1. All code quality issues (naming, complexity, duplication, dead code)
-2. All architectural concerns (coupling, cohesion, separation of concerns)
-3. All potential bugs and edge cases
-4. All performance bottlenecks
-5. All missing error handling
-6. All opportunities for simplification
-
-For each issue, cite the exact file and line range, explain why it is a problem, and provide a \
-specific, concrete recommendation with example code where applicable. Be exhaustive — this review \
-will be used by the team to plan a significant refactor sprint.{suffix}""",
+{file_contents}
+{suffix}""",
 
     "refactor": """\
-You are tasked with producing a comprehensive refactoring plan for this codebase. Begin by reading \
-each of the following files completely:
+Suggest refactoring improvements for the following code. \
+For each file, identify the single biggest SRP violation and propose a concrete fix with code.
 
-{file_list}
-
-Then read any files they import that seem relevant. Produce a detailed refactoring plan that covers:
-1. Identify every function/class that violates the Single Responsibility Principle
-2. Map all circular dependencies and propose resolution strategies
-3. Identify duplicated logic and design shared abstractions to eliminate it
-4. Propose a new module/package structure with rationale
-5. List every public API that should be changed and how
-6. Write out the full, new version of the three most complex files after refactoring
-7. Estimate the risk level of each change (low/medium/high) with justification
-
-Be specific and detailed — include actual proposed code, not just high-level descriptions.{suffix}""",
+{file_contents}
+{suffix}""",
 
     "security_audit": """\
-Conduct a comprehensive security audit of this codebase. Start by reading each of these files \
-thoroughly:
+Security audit the following code. List every vulnerability you find, \
+cite the file and line, classify severity (Critical/High/Medium/Low), and give a one-line fix.
 
-{file_list}
-
-Then trace all data flows from external inputs to outputs. Produce a detailed threat model and \
-vulnerability report covering:
-1. All injection vulnerabilities (SQL, command, LDAP, XPath, etc.) — cite exact locations
-2. All authentication and authorization flaws
-3. All cryptographic weaknesses (weak algorithms, hardcoded secrets, improper key management)
-4. All insecure deserialization paths
-5. All sensitive data exposure risks
-6. All SSRF, XXE, and path traversal vulnerabilities
-7. All business logic flaws
-8. CVSS score for each finding (Base, Temporal, Environmental)
-9. Specific remediation code for each Critical and High severity finding
-
-Map every finding to a CWE identifier. Be thorough — this will be submitted to a compliance \
-auditor.{suffix}""",
+{file_contents}
+{suffix}""",
 
     "doc_generation": """\
-Generate comprehensive, production-grade documentation for this codebase. Read each of these \
-files in full:
+Write concise API documentation for every public function and class in the following code. \
+Include type signatures, parameter descriptions, and a usage example for each.
 
-{file_list}
-
-Then read any additional files needed to fully understand the system. Produce:
-1. A high-level architecture overview with a textual diagram (ASCII art)
-2. A developer guide explaining how to set up, run, and test the project
-3. Full API reference documentation for every public function, class, and module (with type \
-signatures, parameter descriptions, return values, exceptions raised, and usage examples)
-4. A troubleshooting guide covering the 10 most likely failure modes
-5. A glossary of domain terms used in the codebase
-6. A changelog template showing how to document breaking changes
-
-Write in clear, precise technical prose. Every code example should be runnable.{suffix}""",
+{file_contents}
+{suffix}""",
 
     "architecture": """\
-Perform a deep architectural analysis of this codebase and produce a full architectural \
-improvement proposal. Start by reading these files:
+Analyze the architecture of the following code. Draw an ASCII component diagram, \
+identify the top 3 architectural concerns, and propose one improvement for each.
 
-{file_list}
-
-Then explore the broader codebase as needed. Your analysis must include:
-1. Current architecture description (draw ASCII diagrams of the component relationships)
-2. Identification of all architectural anti-patterns present (Big Ball of Mud, God Object, \
-Spaghetti Code, Leaky Abstraction, etc.)
-3. Scalability analysis — where will this system break under 10x, 100x load?
-4. A proposed target architecture with rationale, migration path, and risk assessment
-5. Three alternative architectural approaches with detailed trade-off comparison (include a \
-decision matrix)
-6. Specific, actionable tickets for the first three sprints of the migration
-7. A list of architecture decision records (ADRs) that should be written
-
-Include concrete examples and diagrams throughout.{suffix}""",
+{file_contents}
+{suffix}""",
 }
+
+
+_BINARY_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".pyc", ".pyo",
+    ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flac",
+    ".bin", ".dat", ".db", ".sqlite", ".sqlite3",
+    ".wasm", ".class", ".jar",
+}
+
+
+def _read_file_safe(path: str) -> str:
+    import os
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _BINARY_EXTENSIONS:
+        return "(binary file — skipped)"
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(_MAX_FILE_CHARS)
+        if b"\x00" in raw:
+            return "(binary file — skipped)"
+        content = raw.decode("utf-8", errors="replace")
+        if len(raw) == _MAX_FILE_CHARS:
+            content += "\n... (truncated)"
+        return content
+    except Exception:
+        return "(could not read file)"
+
+
+def _format_file_contents(files: list[RepoFile]) -> str:
+    sections: list[str] = []
+    for f in files:
+        content = _read_file_safe(f.absolute_path)
+        sections.append(f"### FILE: {f.relative_path}\n```\n{content}\n```")
+    return "\n\n".join(sections)
 
 
 def generate_prompt(
@@ -110,10 +93,10 @@ def generate_prompt(
     files: list[RepoFile],
     random_fn: Callable[[], float],
 ) -> BurnPrompt:
-    file_list = "\n".join(f"  - {f.relative_path}" for f in files)
+    file_contents = _format_file_contents(files)
     template = _TEMPLATES[category]
-    text = template.format(file_list=file_list, suffix=_PLAN_ONLY_SUFFIX)
-    estimated_tokens = len(text) // 4 + sum(f.size_bytes // 4 for f in files)
+    text = template.format(file_contents=file_contents, suffix=_PLAN_ONLY_SUFFIX)
+    estimated_tokens = len(text) // 4
     return BurnPrompt(
         category=category,
         text=text,

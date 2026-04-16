@@ -3,21 +3,19 @@ from __future__ import annotations
 import math
 from typing import Callable
 
-
-def sample_exponential_ms(rate_per_hour: int, random_fn: Callable[[], float]) -> float:
-    """Sample inter-arrival delay in milliseconds from an exponential distribution.
-
-    Models requests arriving as a Poisson process at the given rate.
-    Mean delay = 3_600_000ms / rate_per_hour.
-    """
-    rate_per_ms = rate_per_hour / 3_600_000
-    u = random_fn()
-    # Clamp to avoid log(0)
-    u = max(u, 1e-10)
-    return -math.log(u) / rate_per_ms
-
+_STATISTICAL_RATE_PER_HOUR = 120
 
 _WORK_THRESHOLD = 0.05
+
+
+def sample_statistical_delay_ms(random_fn: Callable[[], float]) -> float:
+    """Sample a Poisson-distributed delay to mimic natural developer pacing.
+
+    Mean delay is based on ~120 requests/hour (~30s between requests on average).
+    """
+    rate_per_ms = _STATISTICAL_RATE_PER_HOUR / 3_600_000
+    u = max(random_fn(), 1e-10)
+    return -math.log(u) / rate_per_ms
 
 
 def is_within_work_window(hour: int) -> bool:

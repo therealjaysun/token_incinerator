@@ -6,6 +6,7 @@ render_display function that produces the Rich renderable.
 
 from datetime import datetime, timezone
 from typing import Optional
+from unittest.mock import patch
 
 import pytest
 from rich.console import Console
@@ -31,7 +32,7 @@ def make_state(
 
 
 def make_config(**kwargs) -> DaemonConfig:
-    defaults = dict(repo_path="/home/user/myproject", rate_per_hour=12000)
+    defaults = dict(repo_path="/home/user/myproject")
     defaults.update(kwargs)
     return DaemonConfig(**defaults)
 
@@ -72,32 +73,33 @@ class TestRenderDisplay:
         ))
         assert "8" in output
 
-    def test_shows_running_status(self):
+    @patch("incinerator.watch.time.time", return_value=1.0)
+    def test_shows_running_status(self, _mock_time: object) -> None:
+        # Mid phrase: typed portion includes first verb
         output = render_to_text(render_display(
             state=make_state(),
             config=make_config(),
             elapsed_seconds=60,
             is_running=True,
-            tick=0,
         ))
         assert "wasting" in output.lower()
 
-    def test_rotates_spinner_frame_every_tick_but_verb_every_three_ticks(self):
+    def test_spinner_braille_frame_changes_with_wall_clock(self) -> None:
+        """Braille uses time.time(); different times → different frame char."""
         base_kwargs = dict(
             state=make_state(),
             config=make_config(),
             elapsed_seconds=60,
             is_running=True,
         )
-        tick_0 = render_to_text(render_display(tick=0, **base_kwargs))
-        tick_1 = render_to_text(render_display(tick=1, **base_kwargs))
-        tick_2 = render_to_text(render_display(tick=2, **base_kwargs))
-        tick_3 = render_to_text(render_display(tick=3, **base_kwargs))
-
-        assert "wasting" in tick_0.lower()
-        assert "wasting" in tick_1.lower()
-        assert "wasting" in tick_2.lower()
-        assert "being annoying" in tick_3.lower()
+        with patch("incinerator.watch.time.time", return_value=0.0):
+            a = render_to_text(render_display(**base_kwargs))
+        with patch("incinerator.watch.time.time", return_value=0.5):
+            b = render_to_text(render_display(**base_kwargs))
+        # Both should contain a braille dot pattern from _SPINNER_FRAMES
+        assert any(c in a for c in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+        assert any(c in b for c in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+        assert a != b
 
     def test_shows_stopped_status(self):
         output = render_to_text(render_display(
@@ -206,14 +208,14 @@ class TestRenderDisplay:
         ))
         assert "next run" in output.lower()
 
-    def test_shows_steady_mode_when_not_statistical(self):
+    def test_shows_full_blast_mode_when_not_statistical(self):
         output = render_to_text(render_display(
             state=make_state(),
             config=make_config(statistical=False),
             elapsed_seconds=60,
             is_running=True,
         ))
-        assert "steady" in output.lower()
+        assert "full blast" in output.lower()
 
     def test_elapsed_from_state_reflects_session_start(self):
         started = datetime(2026, 4, 15, 8, 0, tzinfo=timezone.utc)

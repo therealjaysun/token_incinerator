@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from rich.columns import Columns
 from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
@@ -29,7 +29,7 @@ _SPINNER_VERBS = (
     "polarbear clubbing",
     "Allbirds-ing",
     "bugging",
-    "lgtm-ing"
+    "lgtm-ing",
     "rugpulling",
     "tweeting into the void",
     "losing money",
@@ -50,6 +50,27 @@ _SPINNER_VERBS = (
 )
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+# Braille spinner: advance frame by wall clock so it animates even when poll is slow
+_SPINNER_HZ = 12.0
+# Typed line: new phrase every N seconds (type-out + brief hold)
+_PHRASE_DURATION_SEC = 5.0
+_TYPING_CHARS_PER_SEC = 24.0
+_PHRASE_PAUSE_START_SEC = 0.15
+
+_MAX_LOG_LINES = 12
+
+_EVENT_LABELS: dict[str, tuple[str, str]] = {
+    "daemon_started":      ("✓ Started",           "bold green"),
+    "repo_scanned":        ("✓ Repo scanned",      "green"),
+    "prompt_dispatched":   ("→ Prompt sent",        "cyan"),
+    "waiting_for_claude":  ("⏳ Waiting for Claude", "yellow"),
+    "run_complete":        ("✓ Run complete",       "green"),
+    "outside_work_hours":  ("◷ Outside work hours", "dim"),
+    "budget_exhausted":    ("■ Budget exhausted",   "bold red"),
+    "fatal_error":         ("✗ Fatal error",        "bold red"),
+    "daemon_stopped":      ("■ Stopped",            "red"),
+}
 
 
 def _fmt_elapsed(seconds: float) -> str:
@@ -85,10 +106,88 @@ def _fmt_next_run(next_run_at: Optional[datetime]) -> str:
     return f"in {_fmt_elapsed(remaining)}"
 
 
-def _spinner_status(tick: int) -> Text:
-    verb = _SPINNER_VERBS[(tick // 3) % len(_SPINNER_VERBS)]
-    frame = _SPINNER_FRAMES[tick % len(_SPINNER_FRAMES)]
-    return Text(f"{frame} {verb}...", style="bold green")
+def _spinner_status() -> Text:
+    """Braille spinner + Claude-style typewriter line (wall-clock driven)."""
+    t = time.time()
+    frame = int(t * _SPINNER_HZ) % len(_SPINNER_FRAMES)
+
+    phrase_idx = int(t / _PHRASE_DURATION_SEC) % len(_SPINNER_VERBS)
+    verb = _SPINNER_VERBS[phrase_idx]
+    phase = t % _PHRASE_DURATION_SEC
+    target = f"{verb}..."
+
+    if phase < _PHRASE_PAUSE_START_SEC:
+        typed = ""
+        show_cursor = True
+    else:
+        elapsed = phase - _PHRASE_PAUSE_START_SEC
+        n = min(len(target), int(elapsed * _TYPING_CHARS_PER_SEC))
+        typed = target[:n]
+        show_cursor = n < len(target)
+
+    cursor = "▌" if show_cursor else ""
+    return Text.assemble(
+        Text(_SPINNER_FRAMES[frame], style="bold green"),
+        Text(" "),
+        Text(typed + cursor, style="bold green"),
+    )
+
+
+def _format_log_line(entry: dict) -> Optional[Text]:
+    event = entry.get("event", "")
+    ts_raw = entry.get("timestamp", "")
+
+    label, style = _EVENT_LABELS.get(event, (event, "dim"))
+
+    ts_str = ""
+    if ts_raw:
+        try:
+            dt = datetime.fromisoformat(ts_raw)
+            ts_str = dt.strftime("%H:%M:%S")
+        except (ValueError, TypeError):
+            ts_str = str(ts_raw)[:8]
+
+    detail = ""
+    if event == "daemon_started":
+        detail = f"  pid={entry.get('pid', '?')}"
+    elif event == "repo_scanned":
+        detail = f"  {entry.get('file_count', '?')} files"
+    elif event == "prompt_dispatched":
+        detail = f"  category={entry.get('category', '?')}"
+    elif event == "waiting_for_claude":
+        elapsed = entry.get("elapsed_seconds", 0)
+        detail = f"  {elapsed}s elapsed"
+    elif event == "run_complete":
+        r = entry.get("result", {})
+        if r.get("success"):
+            detail = f"  ${r.get('cost_usd', 0):.4f}  {r.get('input_tokens', 0) + r.get('output_tokens', 0):,} tokens"
+        else:
+            err = r.get("error", "")
+            detail = f"  FAILED: {err[:60]}" if err else "  FAILED"
+    elif event == "fatal_error":
+        detail = f"  {entry.get('reason', '')}: {entry.get('message', '')[:50]}"
+    elif event == "daemon_stopped":
+        detail = f"  reason={entry.get('reason', '?')}"
+
+    return Text(f"  {ts_str}  {label}{detail}", style=style)
+
+
+def _read_recent_log_lines(log_path: Path, max_lines: int = _MAX_LOG_LINES) -> list[dict]:
+    if not log_path.exists():
+        return []
+    try:
+        raw = log_path.read_text()
+    except Exception:
+        return []
+    lines = raw.strip().splitlines()
+    recent = lines[-max_lines:] if len(lines) > max_lines else lines
+    entries: list[dict] = []
+    for line in recent:
+        try:
+            entries.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return entries
 
 
 def render_display(
@@ -96,11 +195,10 @@ def render_display(
     config: DaemonConfig,
     elapsed_seconds: float,
     is_running: bool,
-    tick: int = 0,
+    log_entries: Optional[list[dict]] = None,
 ) -> object:
-    status_text = _spinner_status(tick) if is_running else Text("■ STOPPED", style="bold red")
+    status_text = _spinner_status() if is_running else Text("■ STOPPED", style="bold red")
 
-    # --- Stats table ---
     stats = Table.grid(padding=(0, 2))
     stats.add_column(style="dim", justify="right")
     stats.add_column(justify="left")
@@ -121,10 +219,8 @@ def render_display(
     if is_running:
         if config.statistical:
             stats.add_row("Next run", _fmt_next_run(state.next_run_at))
-        else:
-            stats.add_row("Mode", "steady")
+        stats.add_row("Mode", "statistical" if config.statistical else "full blast")
 
-    # --- Budget progress ---
     budget_lines: list[object] = []
 
     if config.budget_tokens is not None:
@@ -167,7 +263,24 @@ def render_display(
         padding=(0, 1),
     )
 
-    return Group(header, budget_panel)
+    # --- Activity log ---
+    log_lines: list[object] = []
+    if log_entries:
+        for entry in log_entries:
+            formatted = _format_log_line(entry)
+            if formatted is not None:
+                log_lines.append(formatted)
+    if not log_lines:
+        log_lines.append(Text("  Waiting for activity...", style="dim"))
+
+    log_panel = Panel(
+        Group(*log_lines),
+        title="Activity Log",
+        border_style="dim",
+        padding=(0, 1),
+    )
+
+    return Group(header, budget_panel, log_panel)
 
 
 def _ascii_bar(pct: float, width: int = 30) -> str:
@@ -175,17 +288,17 @@ def _ascii_bar(pct: float, width: int = 30) -> str:
     return "[" + "█" * filled + "░" * (width - filled) + "]"
 
 
-def watch_loop(state_dir: str, poll_interval: float = 1.0) -> None:
+def watch_loop(state_dir: str, poll_interval: float = 0.08) -> None:
     from rich.live import Live
 
     from incinerator.daemon import PidFileManager
 
     mgr = PidFileManager(state_dir=state_dir)
     state_file = Path(state_dir) / "state.json"
+    log_file = Path(state_dir) / "incinerator.log"
 
     try:
-        tick = 0
-        with Live(refresh_per_second=2, screen=False) as live:
+        with Live(refresh_per_second=30, screen=False) as live:
             while True:
                 pid_info = mgr.read()
                 is_running = pid_info is not None and mgr.is_process_alive(pid_info["pid"])
@@ -202,14 +315,15 @@ def watch_loop(state_dir: str, poll_interval: float = 1.0) -> None:
                 if config is None:
                     config = DaemonConfig(repo_path="(not running)")
 
+                recent_logs = _read_recent_log_lines(log_file)
+
                 live.update(render_display(
                     state=state,
                     config=config,
                     elapsed_seconds=elapsed_from_state(state),
                     is_running=is_running,
-                    tick=tick,
+                    log_entries=recent_logs,
                 ))
-                tick += 1
 
                 if not is_running:
                     time.sleep(0.5)
@@ -217,7 +331,7 @@ def watch_loop(state_dir: str, poll_interval: float = 1.0) -> None:
 
                 time.sleep(poll_interval)
     except KeyboardInterrupt:
-        raise  # let the caller (start command) print the detach message
+        raise
 
 
 def _empty_state() -> BudgetState:

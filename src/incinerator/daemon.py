@@ -73,4 +73,10 @@ def fork_daemon(config: DaemonConfig, state_dir: Optional[str] = None) -> int:
             env=env,
         )
     child.poll()  # Don't wait — just detach
+
+    # Write PID file from the parent immediately so the watch loop can find it
+    # without a race condition against the child's startup time.
+    pid_mgr = PidFileManager(state_dir=state_dir)
+    pid_mgr.write(pid=child.pid, config=config)
+
     return child.pid

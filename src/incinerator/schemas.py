@@ -23,7 +23,6 @@ class ClaudeJsonOutput(BaseModel):
 
 class DaemonConfig(BaseModel):
     repo_path: str
-    rate_per_hour: int = Field(default=12000, gt=0)
     model: Optional[str] = None
     claude_path: str = "claude"
     working_hours_only: bool = False
